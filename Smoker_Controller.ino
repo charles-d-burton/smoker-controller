@@ -22,6 +22,7 @@
 #include <Console.h>
 #include <PID_AutoTune_v0.h>
 #include <PID_v1.h>
+#include <TimerOne.h>
 
 // So we can save and retrieve settings
 #include <EEPROM.h>
@@ -105,64 +106,170 @@ void setup() {
   
   // Initialize the PID and related variables
   LoadParameters();
-  
   // wait for MAX chip to stabilize
-  delay(500);
-  //Timer code, not sure if need
-  // Run timer2 interrupt every 15 ms 
-  //TCCR4A = 0;
-  //TCCR4B = 1<<CS42 | 1<<CS41 | 1<<CS40;
+  delay(2000);
+  
+  // Initialize the PID and related variables
+  myPID.SetTunings(Kp,Ki,Kd);
  
-  //Timer2 Overflow Interrupt Enable
-  //TIMSK4 |= 1<<TOIE4;
+  myPID.SetSampleTime(1000);
+  myPID.SetOutputLimits(0, WindowSize);
+  
+  //Initialize the interrupt timer
+  Timer1.initialize(15000);
+  Timer1.attachInterrupt(TimerInterrupt);
 }
 
-// ************************************************
-// Timer Interrupt Handler
-//MIGHT NEED TO DO WORK HERE, MIGHT NEED DIFFERENT TIMER
-// ************************************************
-/*SIGNAL(TIMER1_OVF_vect) 
-{
-  if (opState == OFF)
-  {
+//Timer interrupt handler
+void TimerInterrupt() {
+  if (opState == OFF) {
     digitalWrite(RelayPin, LOW);  // make sure relay is off
+  } else {
+    DriveOutput();
   }
-  else
-  {
-    //DriveOutput();
-  }
-}*/
+}
 
 void loop() {
-  char tempSetBuf[4];
-   if (Bridge.get("setTemp", tempSetBuf, 4) > 0) {
+  char tempSetBuf[8];
+   if (Bridge.get("setTemp", tempSetBuf, 8) > 0) {
      setTemp = String(tempSetBuf);
-     //Console.println(setTemp);
-     //Bridge.put("targetF=", setTemp);
+     Setpoint = stringToDouble(setTemp);
+     Console.println(Setpoint);
+     //opState = RUN;
+   }
+   if (Bridge.get("state", tempSetBuf, 8) > 0) {
+     String setState = String(tempSetBuf);
+     Console.println(setState);
+     if (setState.equals("on")){
+       //turn the PID on
+       myPID.SetMode(AUTOMATIC);
+       windowStartTime = millis();
+       opState = RUN; 
+     }  else {
+       myPID.SetMode(MANUAL);
+       digitalWrite(RelayPin, LOW);
+       opState = OFF;
+     }
+   } 
+   if (Bridge.get("tune", tempSetBuf, 8) > 0) {
+     String setTune = String(tempSetBuf);
+     Console.println(setTune);
+     if (setTune.equals("on")) {
+       opState = SETP;
+       StartAutoTune();
+     }     
    }
    
-   double c = thermocouple.readCelsius();
-   if (isnan(c)) {
-     //Console.println("Something wrong with thermocouple!");
-   } else {
-
-     //We're getting good data.  Make is so the bridge can see it
-     double tempF = thermocouple.readFarenheit();
-     if (!setTemp.equals("")) {
-       Bridge.put(TARGEF, setTemp);
-     }     
-     Bridge.put(DEGF, doubleToString(tempF, 2));
-     
-   } 
-   delay(1000);
+   switch (opState) {
+     case OFF:
+       Bridge.put("state", "off");
+       Console.println("OFF");
+       break;
+     case SETP:
+       Bridge.put("state", "learn");
+       Console.println("LEARN");
+       break;
+     case RUN:
+       Bridge.put("state", "on");
+       Console.println("ON");
+       DoControl();
+       break;
+     case TUNE_P:
+       break;
+     case TUNE_I:
+       break;
+     case TUNE_D:
+       break;  
+   }   
+   
+   if (Input > 0) {
+     Bridge.put(DEGF, doubleToString(Input, 2));
+   }
+   Bridge.put(TARGEF, doubleToString(Setpoint,0));
+   
+   delay(500);
    
 }
 
-void Off() {
-  myPID.SetMode(MANUAL);
-  digitalWrite(RelayPin, LOW);
-}
+// ************************************************
+// Execute the control loop
+// ************************************************
+void DoControl() {
+  double f = thermocouple.readFarenheit();
+   if (isnan(f)) {
+     Bridge.put("error", "sensor_error");
+     //Console.println("Something wrong with thermocouple!");
+   } else {
+      Input = f;
+      Console.println(Input);
+     //We're getting good data.  Make is so the bridge can see it
+     /*double tempF = thermocouple.readFarenheit();
+     */
+    if (tuning) { // run the auto-tuner
+       if (aTune.Runtime()){ // returns 'true' when done
+        FinishAutoTune();
+       }
+    } else { // Execute control algorithm
+       myPID.Compute();
+    }
   
+    // Time Proportional relay state is updated regularly via timer interrupt.
+    onTime = Output;  
+  } 
+}
+
+// ************************************************
+// Called by ISR every 15ms to drive the output
+// ************************************************
+void DriveOutput() {  
+  long now = millis();
+  // Set the output
+  // "on time" is proportional to the PID output
+  if(now - windowStartTime>WindowSize) { //time to shift the Relay Window
+     windowStartTime += WindowSize;
+  }
+  if((onTime > 100) && (onTime > (now - windowStartTime))) {
+     digitalWrite(RelayPin,HIGH);
+  } else {
+     digitalWrite(RelayPin,LOW);
+  }
+}
+
+
+// ************************************************
+// Start the Auto-Tuning cycle
+// ************************************************
+ 
+void StartAutoTune() {
+   // REmember the mode we were in
+   ATuneModeRemember = myPID.GetMode();
+ 
+   // set up the auto-tune parameters
+   aTune.SetNoiseBand(aTuneNoise);
+   aTune.SetOutputStep(aTuneStep);
+   aTune.SetLookbackSec((int)aTuneLookBack);
+   tuning = true;
+}
+
+// ************************************************
+// Return to normal control
+// ************************************************
+void FinishAutoTune()
+{
+   tuning = false;
+ 
+   // Extract the auto-tune calculated parameters
+   Kp = aTune.GetKp();
+   Ki = aTune.GetKi();
+   Kd = aTune.GetKd();
+ 
+   // Re-tune the PID and revert to normal control mode
+   myPID.SetTunings(Kp,Ki,Kd);
+   myPID.SetMode(ATuneModeRemember);
+   
+   // Persist any changed parameters to EEPROM
+   SaveParameters();
+}
 // ************************************************
 // Save any parameter changes to EEPROM
 // ************************************************
