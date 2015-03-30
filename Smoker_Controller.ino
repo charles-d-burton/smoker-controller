@@ -172,7 +172,7 @@ void loop() {
        break;
      case RUN:
        Bridge.put("cState", "on");
-       Console.println("ON");
+       //Console.println("ON");
        DoControl();
        break;
      case TUNE_P:
