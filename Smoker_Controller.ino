@@ -127,6 +127,7 @@ void TimerInterrupt() {
   } else {
     DriveOutput();
   }
+  //Console.println("Interrupt");
 }
 
 void loop() {
@@ -139,13 +140,13 @@ void loop() {
    }
    if (Bridge.get("state", tempSetBuf, 8) > 0) {
      String setState = String(tempSetBuf);
-     Console.println(setState);
+     Console.println("Set State: " + setState);
      if (setState.equals("on")){
        //turn the PID on
        myPID.SetMode(AUTOMATIC);
        windowStartTime = millis();
        opState = RUN; 
-     }  else {
+     }  else if (setState.equals("off")) {
        myPID.SetMode(MANUAL);
        digitalWrite(RelayPin, LOW);
        opState = OFF;
@@ -162,15 +163,15 @@ void loop() {
    
    switch (opState) {
      case OFF:
-       Bridge.put("state", "off");
+       Bridge.put("cState", "off");
        Console.println("OFF");
        break;
      case SETP:
-       Bridge.put("state", "learn");
+       Bridge.put("cState", "learn");
        Console.println("LEARN");
        break;
      case RUN:
-       Bridge.put("state", "on");
+       Bridge.put("cState", "on");
        Console.println("ON");
        DoControl();
        break;
@@ -233,6 +234,7 @@ void DriveOutput() {
   } else {
      digitalWrite(RelayPin,LOW);
   }
+  
 }
 
 
