@@ -32,9 +32,10 @@
 #define CS   4
 #define CLK  5
 //Keys for the Bridge interface
-#define DEGF "degF"
-#define DEGC "degC"
-#define TARGEF "targetF"
+#define DEGF "runningF"
+#define DEGC "runningC"
+#define TARGEF "runningTargetF"
+#define RUNSTATE "runningState"
 
 #define KP "kp"
 #define SP "sp"
@@ -132,29 +133,25 @@ void TimerInterrupt() {
 
 void loop() {
   char tempSetBuf[8];
-   if (Bridge.get("setTemp", tempSetBuf, 8) > 0) {
+   if (Bridge.get("setTempF", tempSetBuf, 8) > 0) {
      setTemp = String(tempSetBuf);
      Setpoint = stringToDouble(setTemp);
-     Console.println(Setpoint);
-     //opState = RUN;
    }
-   if (Bridge.get("state", tempSetBuf, 8) > 0) {
+   if (Bridge.get("setRunState", tempSetBuf, 8) > 0) {
      String setState = String(tempSetBuf);
-     Console.println("Set State: " + setState);
      if (setState.equals("on")){
        //turn the PID on
        myPID.SetMode(AUTOMATIC);
        windowStartTime = millis();
-       opState = RUN; 
+       opState = RUN;
      }  else if (setState.equals("off")) {
        myPID.SetMode(MANUAL);
        digitalWrite(RelayPin, LOW);
        opState = OFF;
      }
    } 
-   if (Bridge.get("tune", tempSetBuf, 8) > 0) {
+   if (Bridge.get("setStateTune", tempSetBuf, 8) > 0) {
      String setTune = String(tempSetBuf);
-     Console.println(setTune);
      if (setTune.equals("on")) {
        opState = SETP;
        StartAutoTune();
@@ -163,16 +160,16 @@ void loop() {
    
    switch (opState) {
      case OFF:
-       Bridge.put("cState", "off");
+       Bridge.put( RUNSTATE, "OFF");
        Console.println("OFF");
        break;
      case SETP:
-       Bridge.put("cState", "learn");
+       Bridge.put(RUNSTATE, "LEARN");
        Console.println("LEARN");
        break;
      case RUN:
-       Bridge.put("cState", "on");
-       //Console.println("ON");
+       Bridge.put(RUNSTATE, "ON");
+       Console.println("ON");
        DoControl();
        break;
      case TUNE_P:
@@ -183,12 +180,14 @@ void loop() {
        break;  
    }   
    
-   if (Input > 0) {
-     Bridge.put(DEGF, doubleToString(Input, 2));
+   //Make sure the bridge always has the current temperature.
+   double f = thermocouple.readFarenheit();
+   if (!isnan(f)) {
+     Bridge.put(DEGF, doubleToString(f,2));
    }
    Bridge.put(TARGEF, doubleToString(Setpoint,0));
    
-   delay(500);
+   //delay(100);
    
 }
 
@@ -212,7 +211,10 @@ void DoControl() {
        }
     } else { // Execute control algorithm
        myPID.Compute();
-    }
+       Console.println("PID COMPUTED");
+       Console.println(Output);
+       Console.println("");
+     }
   
     // Time Proportional relay state is updated regularly via timer interrupt.
     onTime = Output;  
