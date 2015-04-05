@@ -135,7 +135,8 @@ void loop() {
   char tempSetBuf[8];
    if (Bridge.get("setTempF", tempSetBuf, 8) > 0) {
      setTemp = String(tempSetBuf);
-     Setpoint = stringToDouble(setTemp);
+     //Setpoint = stringToDouble(setTemp);
+     Setpoint = (double)setTemp.toInt();
    }
    if (Bridge.get("setRunState", tempSetBuf, 8) > 0) {
      String setState = String(tempSetBuf);
@@ -181,13 +182,15 @@ void loop() {
    }   
    
    //Make sure the bridge always has the current temperature.
-   double f = thermocouple.readFarenheit();
-   if (!isnan(f)) {
-     Bridge.put(DEGF, doubleToString(f,2));
+   int temp = (int)thermocouple.readFarenheit();
+   if (!isnan(temp)) {
+     
+     Bridge.put(DEGF, String(temp));
    }
-   Bridge.put(TARGEF, doubleToString(Setpoint,0));
+   temp = (int)Setpoint;
+   Bridge.put(TARGEF, String(temp));
    
-   //delay(100);
+   delay(200);
    
 }
 
@@ -355,7 +358,7 @@ double EEPROM_readDouble(int address)
 }
 
 //Helpers for String to double conversions
-String doubleToString(double input,int decimalPlaces){
+/*String doubleToString(double input,int decimalPlaces){
   if(decimalPlaces!=0){
     String string = String((int)(input*pow(10,decimalPlaces)));
     if(abs(input)<1){
@@ -374,4 +377,4 @@ double stringToDouble(String input) {
     char floatbuf[8];
     input.toCharArray(floatbuf, sizeof(floatbuf));
     return atof(floatbuf);
-}
+}*/
