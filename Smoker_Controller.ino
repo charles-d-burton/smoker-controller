@@ -15,14 +15,15 @@
   Written by Limor Fried/Ladyada for Adafruit Industries.  
   BSD license, all text above must be included in any redistribution
  ****************************************************/
-
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
 #include <SPI.h>
 #include "Adafruit_MAX31855.h"
-#include <Bridge.h>
-#include <Console.h>
 #include <PID_AutoTune_v0.h>
 #include <PID_v1.h>
 #include <TimerOne.h>
+#include "credentials.h"
 
 // So we can save and retrieve settings
 #include <EEPROM.h>
@@ -43,6 +44,17 @@
 #define KD "kd"
 // Output Relay
 #define RelayPin 7
+
+// ************************************************
+// WIFI and MQTT
+// ************************************************
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASSWD;
+const char* mqtt_server = "mosquitto.localdomain";
+long lastMsg = 0;
 
 // ************************************************
 // PID Variables and constants
@@ -98,9 +110,75 @@ operatingState opState = OFF;
 
 String setTemp = "";
 
+
+// Setup and connect to the wifi
+void setup_wifi() {
+  delay(100);
+  Serial.print("Connecting to: ");
+  Serial.println(ssid);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  //randomSeed(micros());
+  Serial.println("");
+  Serial.println("Wifi connected");
+  Serial.println("IP address: ");
+  Serial.println(WiFi.localIP());
+  Serial.println("Gateway: ");
+  Serial.println(WiFi.gatewayIP());
+}
+
+//Reconnect to the MQTT broker also check WiFi state
+void reconnect() {
+  if (WiFi.status() != WL_CONNECTED) {
+      setup_wifi();
+  }                   
+  // Loop until we're reconnected
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Create a random client ID
+    String clientId = "ESP8266Client-";
+    clientId += String(random(0xffff), HEX);
+    // Attempt to connect
+    if (client.connect(clientId.c_str())) {
+      Serial.println("connected");
+      // Once connected, publish an announcement...
+      client.publish("/homeassistant/devices/doorbell/status", "hello world");
+      espClient.flush();
+      // ... and resubscribe
+      client.subscribe("/homeassistant/devices/doorbell/receive");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
+}
+
+//Process messages incoming from the broker
+void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+}
+
+//Setup the WIFI, MQTT, and PID
 void setup() {
-  Bridge.begin();
-  Console.begin();
+  Serial.begin(19200);
+  setup_wifi();
+  
+  //timeClient.begin();
+  client.setServer(mqtt_server, 1883);
+  client.setCallback(callback);
+  
   // Initialize Relay Control:
   pinMode(RelayPin, OUTPUT);    // Output mode to drive relay
   digitalWrite(RelayPin, LOW);  // make sure it is off to start
@@ -131,6 +209,7 @@ void TimerInterrupt() {
   //Console.println("Interrupt");
 }
 
+//Main loop
 void loop() {
   char tempSetBuf[8];
    if (Bridge.get("setTempF", tempSetBuf, 8) > 0) {
