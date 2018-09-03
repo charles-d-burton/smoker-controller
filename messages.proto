@@ -1,0 +1,17 @@
+syntax = "proto3";
+package pb;
+
+message SendTemp {
+   string device_id = 1;
+   bool on = 2;
+   float temp_cel = 3;
+   float temp_far = 4;
+   int32 time = 5;
+}
+
+message ReceiveControl {
+   float temp_set_far = 1;
+   float temp_set_cel = 2;
+  bool set_on = 3;
+  int32 time_off = 4; 
+}
