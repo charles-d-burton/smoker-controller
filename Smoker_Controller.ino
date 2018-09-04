@@ -1,20 +1,3 @@
-
-
-/*************************************************** 
-  This is an example for the Adafruit Thermocouple Sensor w/MAX31855K
-
-  Designed specifically to work with the Adafruit Thermocouple Sensor
-  ----> https://www.adafruit.com/products/269
-
-  These displays use SPI to communicate, 3 pins are required to  
-  interface
-  Adafruit invests time and resources providing this open source code, 
-  please support Adafruit and open-source hardware by purchasing 
-  products from Adafruit!
-
-  Written by Limor Fried/Ladyada for Adafruit Industries.  
-  BSD license, all text above must be included in any redistribution
- ****************************************************/
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
@@ -22,7 +5,6 @@
 #include "Adafruit_MAX31855.h"
 #include <PID_AutoTune_v0.h>
 #include <PID_v1.h>
-#include <TimerOne.h>
 #include "credentials.h"
 
 // So we can save and retrieve settings
@@ -32,11 +14,6 @@
 #define DO   3
 #define CS   4
 #define CLK  5
-//Keys for the Bridge interface
-#define DEGF "runningF"
-#define DEGC "runningC"
-#define TARGEF "runningTargetF"
-#define RUNSTATE "runningState"
 
 #define KP "kp"
 #define SP "sp"
@@ -53,7 +30,9 @@ PubSubClient client(espClient);
 
 const char* ssid = WIFI_SSID;
 const char* password = WIFI_PASSWD;
+const char* smoker_id = SMOKER;
 const char* mqtt_server = "mosquitto.localdomain";
+const char* topic = "/homeassistant/devices/smoker";
 long lastMsg = 0;
 
 // ************************************************
@@ -91,10 +70,9 @@ unsigned long windowStartTime;
 // ************************************************
 byte ATuneModeRemember=2;
  
-double aTuneStep=500;
-double aTuneNoise=1;
+float aTuneStep=500;
+float aTuneNoise=1;
 unsigned int aTuneLookBack=20;
- 
 boolean tuning = false;
  
 PID_ATune aTune(&Input, &Output);
@@ -140,16 +118,15 @@ void reconnect() {
   while (!client.connected()) {
     Serial.print("Attempting MQTT connection...");
     // Create a random client ID
-    String clientId = "ESP8266Client-";
+    String clientId = "Smoker-";
     clientId += String(random(0xffff), HEX);
     // Attempt to connect
     if (client.connect(clientId.c_str())) {
       Serial.println("connected");
       // Once connected, publish an announcement...
-      client.publish("/homeassistant/devices/doorbell/status", "hello world");
-      espClient.flush();
+      sendBoot();
       // ... and resubscribe
-      client.subscribe("/homeassistant/devices/doorbell/receive");
+      client.subscribe("/homeassistant/devices/smoker/receive");
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
@@ -168,50 +145,8 @@ void callback(char* topic, byte* payload, unsigned int length) {
   for (int i = 0; i < length; i++) {
     Serial.print((char)payload[i]);
   }
-}
-
-//Setup the WIFI, MQTT, and PID
-void setup() {
-  Serial.begin(19200);
-  setup_wifi();
-  
-  //timeClient.begin();
-  client.setServer(mqtt_server, 1883);
-  client.setCallback(callback);
-  
-  // Initialize Relay Control:
-  pinMode(RelayPin, OUTPUT);    // Output mode to drive relay
-  digitalWrite(RelayPin, LOW);  // make sure it is off to start
-  
-  // Initialize the PID and related variables
-  LoadParameters();
-  // wait for MAX chip to stabilize
-  delay(2000);
-  
-  // Initialize the PID and related variables
-  myPID.SetTunings(Kp,Ki,Kd);
- 
-  myPID.SetSampleTime(1000);
-  myPID.SetOutputLimits(0, WindowSize);
-  
-  //Initialize the interrupt timer
-  Timer1.initialize(15000);
-  Timer1.attachInterrupt(TimerInterrupt);
-}
-
-//Timer interrupt handler
-void TimerInterrupt() {
-  if (opState == OFF) {
-    digitalWrite(RelayPin, LOW);  // make sure relay is off
-  } else {
-    DriveOutput();
-  }
-  //Console.println("Interrupt");
-}
-
-//Main loop
-void loop() {
-  char tempSetBuf[8];
+  //TODO: Decode incoming message
+  /*char tempSetBuf[8];
    if (Bridge.get("setTempF", tempSetBuf, 8) > 0) {
      setTemp = String(tempSetBuf);
      Setpoint = stringToDouble(setTemp);
@@ -235,20 +170,102 @@ void loop() {
        opState = SETP;
        StartAutoTune();
      }     
+   }*/
+}
+
+//Send message announcing boot
+void sendBoot() {
+  StaticJsonBuffer<50> jsonBuffer;
+  JsonObject& root = jsonBuffer.createObject();
+  root["device_id"] = smoker_id;
+  root["run_state"] = opState;
+  
+  char json_message[50];
+  root.printTo(json_message);
+  client.publish(topic,json_message);
+  espClient.flush();
+}
+
+//Send the message out
+void sendTemp(float c, float f) {
+  StaticJsonBuffer<200> jsonBuffer;
+  JsonObject& root = jsonBuffer.createObject();
+  root["device_id"] = smoker_id;
+  root["run_state"] = opState;
+  root["temp_cel"] = c;
+  root["temp_far"] = f;
+  
+  char json_message[200];
+  root.printTo(json_message);
+  client.publish(topic,json_message);
+  espClient.flush();
+}
+
+//Send message denoting an error
+void sendError() {
+  StaticJsonBuffer<50> jsonBuffer;
+  JsonObject& root = jsonBuffer.createObject();
+  root["device_id"] = smoker_id;
+  root["error"] = true;
+  char json_message[50];
+  root.printTo(json_message);
+  client.publish(topic,json_message);
+  espClient.flush();
+}
+
+//Setup the WIFI, MQTT, and PID
+void setup() {
+  Serial.begin(115200);
+  setup_wifi();
+  
+  //timeClient.begin();
+  client.setServer(mqtt_server, 1883);
+  client.setCallback(callback);
+  
+  // Initialize Relay Control:
+  //pinMode(RelayPin, OUTPUT);    // Output mode to drive relay
+  //digitalWrite(RelayPin, LOW);  // make sure it is off to start
+  
+  // Initialize the PID and related variables
+  EEPROM.begin(512);
+  LoadParameters();
+  // wait for MAX chip to stabilize
+  delay(2000);
+  
+  // Initialize the PID and related variables
+  myPID.SetTunings(Kp,Ki,Kd);
+ 
+  myPID.SetSampleTime(1000);
+  myPID.SetOutputLimits(0, WindowSize);
+}
+
+//Timer interrupt handler
+void TimerInterrupt() {
+  if (opState == OFF) {
+    digitalWrite(RelayPin, LOW);  // make sure relay is off
+  } else {
+    DriveOutput();
+  }
+  //Console.println("Interrupt");
+}
+
+//Main loop
+void loop() {
+   Serial.println("Entering main loop");
+   // digitalWrite(ledPin, LOW);
+   if (!client.connected()) {
+     reconnect();
    }
-   
+   client.loop();
    switch (opState) {
      case OFF:
-       Bridge.put( RUNSTATE, "OFF");
-       Console.println("OFF");
+       Serial.println("OFF");
        break;
      case SETP:
-       Bridge.put(RUNSTATE, "LEARN");
-       Console.println("LEARN");
+       Serial.println("LEARN");
        break;
      case RUN:
-       Bridge.put(RUNSTATE, "ON");
-       Console.println("ON");
+       Serial.println("ON");
        DoControl();
        break;
      case TUNE_P:
@@ -260,13 +277,14 @@ void loop() {
    }   
    
    //Make sure the bridge always has the current temperature.
-   double f = thermocouple.readFarenheit();
-   if (!isnan(f)) {
-     Bridge.put(DEGF, doubleToString(f,2));
-   }
-   Bridge.put(TARGEF, doubleToString(Setpoint,0));
+   //double f = thermocouple.readFarenheit();
+   //double c = thermocouple.readCelsius();
+   //if (isnan(f)||isnan(c)) {
+   sendError();
+   //}
    
-   //delay(100);
+   
+   delay(15000);
    
 }
 
@@ -274,30 +292,32 @@ void loop() {
 // Execute the control loop
 // ************************************************
 void DoControl() {
-  double f = thermocouple.readFarenheit();
-   if (isnan(f)) {
-     Bridge.put("error", "sensor_error");
-     //Console.println("Something wrong with thermocouple!");
+   float f = thermocouple.readFarenheit();
+   float c = thermocouple.readCelsius();
+   if (isnan(f)||isnan(c)) {
+     Serial.println("Something wrong with thermocouple!");
+     sendError();
    } else {
       Input = f;
-      Console.println(Input);
+      Serial.println(Input);
      //We're getting good data.  Make is so the bridge can see it
      /*double tempF = thermocouple.readFarenheit();
      */
     if (tuning) { // run the auto-tuner
        if (aTune.Runtime()){ // returns 'true' when done
-        FinishAutoTune();
+         FinishAutoTune();
        }
     } else { // Execute control algorithm
        myPID.Compute();
-       Console.println("PID COMPUTED");
-       Console.println(Output);
-       Console.println("");
+       Serial.println("PID COMPUTED");
+       Serial.println(Output);
+       Serial.println("");
      }
   
     // Time Proportional relay state is updated regularly via timer interrupt.
     onTime = Output;  
   } 
+  sendTemp(c,f);
 }
 
 // ************************************************
@@ -356,52 +376,47 @@ void FinishAutoTune()
 // ************************************************
 // Save any parameter changes to EEPROM
 // ************************************************
-void SaveParameters()
-{
-   if (Setpoint != EEPROM_readDouble(SpAddress))
-   {
-      EEPROM_writeDouble(SpAddress, Setpoint);
+void SaveParameters() {
+   float setpoint, kp, ki, kd;
+   
+   if (Setpoint != EEPROM.get(SpAddress, setpoint)) {
+      EEPROM.put(SpAddress, Setpoint);
    }
-   if (Kp != EEPROM_readDouble(KpAddress))
-   {
-      EEPROM_writeDouble(KpAddress, Kp);
+   if (Kp != EEPROM.get(KpAddress, kp)) {
+      EEPROM.put(KpAddress, Kp);
    }
-   if (Ki != EEPROM_readDouble(KiAddress))
-   {
-      EEPROM_writeDouble(KiAddress, Ki);
+   if (Ki != EEPROM.get(KiAddress, ki)) {
+      EEPROM.put(KiAddress, Ki);
    }
-   if (Kd != EEPROM_readDouble(KdAddress))
-   {
-      EEPROM_writeDouble(KdAddress, Kd);
+   if (Kd != EEPROM.get(KdAddress, kd)) {
+      EEPROM.put(KdAddress, Kd);
    }
+   EEPROM.commit();
 }
  
 // ************************************************
 // Load parameters from EEPROM
 // ************************************************
-void LoadParameters()
-{
+void LoadParameters() {
+   Serial.println("Reading in EEPROM vars");
   // Load from EEPROM
-   Setpoint = EEPROM_readDouble(SpAddress);
-   Kp = EEPROM_readDouble(KpAddress);
-   Ki = EEPROM_readDouble(KiAddress);
-   Kd = EEPROM_readDouble(KdAddress);
+   EEPROM.get(SpAddress, Setpoint);
+   EEPROM.get(KpAddress, Kp);
+   EEPROM.get(KiAddress, Ki);
+   EEPROM.get(KdAddress, Kd);
+   EEPROM.commit();
    
    // Use defaults if EEPROM values are invalid
-   if (isnan(Setpoint))
-   {
+   if (isnan(Setpoint)) {
      Setpoint = 60;
    }
-   if (isnan(Kp))
-   {
+   if (isnan(Kp)) {
      Kp = 500;
    }
-   if (isnan(Ki))
-   {
+   if (isnan(Ki)) {
      Ki = 0.5;
    }
-   if (isnan(Kd))
-   {
+   if (isnan(Kd)) {
      Kd = 0.1;
    }  
 }
@@ -410,19 +425,20 @@ void LoadParameters()
 // ************************************************
 // Write floating point values to EEPROM
 // ************************************************
-void EEPROM_writeDouble(int address, double value)
+/*void EEPROM_writeDouble(int address, double value)
 {
    byte* p = (byte*)(void*)&value;
    for (int i = 0; i < sizeof(value); i++)
    {
       EEPROM.write(address++, *p++);
    }
-}
+   EEPROM.commit();
+}*/
  
 // ************************************************
 // Read floating point values from EEPROM
 // ************************************************
-double EEPROM_readDouble(int address)
+/*double EEPROM_readDouble(int address)
 {
    double value = 0.0;
    byte* p = (byte*)(void*)&value;
@@ -430,8 +446,9 @@ double EEPROM_readDouble(int address)
    {
       *p++ = EEPROM.read(address++);
    }
+   EEPROM.commit();
    return value;
-}
+}*/
 
 //Helpers for String to double conversions
 String doubleToString(double input,int decimalPlaces){
