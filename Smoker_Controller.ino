@@ -325,10 +325,7 @@ void loop() {
      case TUNE_D:
        break;  
    }
-   
-   
    delay(5000);
-   
 }
 
 // ************************************************
@@ -497,7 +494,7 @@ void LoadParameters() {
 }*/
 
 //Helpers for String to double conversions
-String doubleToString(double input,int decimalPlaces){
+/*String doubleToString(double input,int decimalPlaces){
   if(decimalPlaces!=0){
     String string = String((int)(input*pow(10,decimalPlaces)));
     if(abs(input)<1){
@@ -516,4 +513,4 @@ double stringToDouble(String input) {
     char floatbuf[8];
     input.toCharArray(floatbuf, sizeof(floatbuf));
     return atof(floatbuf);
-}
+}*/
