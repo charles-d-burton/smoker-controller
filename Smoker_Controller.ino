@@ -6,33 +6,35 @@
 #include <PID_AutoTune_v0.h>
 #include <PID_v1.h>
 #include "credentials.h"
+#include "FS.h"
 
 // So we can save and retrieve settings
 #include <EEPROM.h>
 
 // IO Pins for thermocouple
-#define DO   3
-#define CS   4
-#define CLK  5
+#define DO   12
+#define CS   13
+#define CLK  14
 
 #define KP "kp"
 #define SP "sp"
 #define KI "ki"
 #define KD "kd"
 // Output Relay
-#define RelayPin 7
+#define RelayPin 16
 
 // ************************************************
 // WIFI and MQTT
 // ************************************************
-WiFiClient espClient;
+WiFiClientSecure espClient;
 PubSubClient client(espClient);
 
 const char* ssid = WIFI_SSID;
 const char* password = WIFI_PASSWD;
 const char* smoker_id = SMOKER;
 const char* mqtt_server = "mosquitto.localdomain";
-const char* topic = "/homeassistant/devices/smoker";
+const char* topic = "/cooktroller/charles/smoker/status";
+const char* aws_endpoint = "a10cp24047duti.iot.us-east-1.amazonaws.com";
 long lastMsg = 0;
 
 // ************************************************
@@ -86,8 +88,6 @@ long lastLogTime = 0;
 enum operatingState { OFF = 0, SETP, RUN, TUNE_P, TUNE_I, TUNE_D, AUTO};
 operatingState opState = OFF;
 
-String setTemp = "";
-
 
 // Setup and connect to the wifi
 void setup_wifi() {
@@ -126,7 +126,8 @@ void reconnect() {
       // Once connected, publish an announcement...
       sendBoot();
       // ... and resubscribe
-      client.subscribe("/homeassistant/devices/smoker/receive");
+      client.subscribe("/cooktroller/charles/smoker/runstate");
+      client.subscribe("/cooktroller/charles/smoker/set_temp");
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
@@ -139,38 +140,32 @@ void reconnect() {
 
 //Process messages incoming from the broker
 void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived [");
+  Serial.println("Message arrived [");
   Serial.print(topic);
   Serial.print("] ");
   for (int i = 0; i < length; i++) {
     Serial.print((char)payload[i]);
   }
-  //TODO: Decode incoming message
-  /*char tempSetBuf[8];
-   if (Bridge.get("setTempF", tempSetBuf, 8) > 0) {
-     setTemp = String(tempSetBuf);
-     Setpoint = stringToDouble(setTemp);
-   }
-   if (Bridge.get("setRunState", tempSetBuf, 8) > 0) {
-     String setState = String(tempSetBuf);
-     if (setState.equals("on")){
-       //turn the PID on
-       myPID.SetMode(AUTOMATIC);
-       windowStartTime = millis();
-       opState = RUN;
-     }  else if (setState.equals("off")) {
-       myPID.SetMode(MANUAL);
-       digitalWrite(RelayPin, LOW);
-       opState = OFF;
+  if (strcmp(topic,"/cooktroller/charles/smoker/runstate")==0) {
+     Serial.println("Setting run state: ");
+     StaticJsonBuffer<50> jsonBuffer;
+     JsonObject& root = jsonBuffer.parseObject(payload);
+     bool runState = root["on"];
+     Serial.print("Got run state request to: ");
+     Serial.println(runState);
+     if (runState) {
+      opState = RUN;
+     } else {
+      opState = OFF;
      }
-   } 
-   if (Bridge.get("setStateTune", tempSetBuf, 8) > 0) {
-     String setTune = String(tempSetBuf);
-     if (setTune.equals("on")) {
-       opState = SETP;
-       StartAutoTune();
-     }     
-   }*/
+  } else if (strcmp(topic,"/cooktroller/charles/smoker/set_temp")==0) {
+    Serial.print("Setting temperature farenheight: ");
+    StaticJsonBuffer<50> jsonBuffer;
+    JsonObject& root = jsonBuffer.parseObject(payload);
+    double tempF = root["temp_far"];
+    Serial.println(tempF);
+    Setpoint = tempF;
+  }
 }
 
 //Send message announcing boot
@@ -178,7 +173,7 @@ void sendBoot() {
   StaticJsonBuffer<50> jsonBuffer;
   JsonObject& root = jsonBuffer.createObject();
   root["device_id"] = smoker_id;
-  root["run_state"] = opState;
+  root["running"] = opState;
   
   char json_message[50];
   root.printTo(json_message);
@@ -191,7 +186,7 @@ void sendTemp(float c, float f) {
   StaticJsonBuffer<200> jsonBuffer;
   JsonObject& root = jsonBuffer.createObject();
   root["device_id"] = smoker_id;
-  root["run_state"] = opState;
+  root["running"] = opState;
   root["temp_cel"] = c;
   root["temp_far"] = f;
   
@@ -216,10 +211,59 @@ void sendError() {
 //Setup the WIFI, MQTT, and PID
 void setup() {
   Serial.begin(115200);
+
+  //Setup Relay PIN driver
+  pinMode(RelayPin, LOW);
+
+  //Setup Window
+  windowStartTime = millis();
+
+  //Setup the WIFI Connection
   setup_wifi();
+
+  //Verify that SPIFFS is ready
+  if (!SPIFFS.begin()) {
+    Serial.println("failed to mount filesystem");
+    return;
+  }
+  Serial.print("Heap: "); Serial.println(ESP.getFreeHeap());
   
-  //timeClient.begin();
-  client.setServer(mqtt_server, 1883);
+  // Load certificate file
+  File cert = SPIFFS.open("/cert.der", "r");
+  if (!cert) {
+    Serial.println("failed to open cert file");
+  } else {
+    Serial.println("cert file opened");
+  }
+
+  delay(100);
+  if (espClient.loadCertificate(cert)) {
+    Serial.println("cert loaded");
+  } else {
+    Serial.println("failed to load cert");
+    return;
+  }
+  delay(100);
+
+  //Load the private key
+  File private_key = SPIFFS.open("/private.der", "r");
+  if (!private_key) {
+    Serial.println("failed to open private key file");
+    return;
+  }
+  delay(100);
+  if(espClient.loadPrivateKey(private_key)) {
+    Serial.println("private key loaded");
+  } else {
+    Serial.println("failed to load private key");
+    return;
+  }
+  Serial.print("Heap: "); Serial.println(ESP.getFreeHeap());
+
+  
+  
+  //Connect to the MQTT Relay TODO: Convert to SSL?
+  client.setServer(aws_endpoint, 8883);
   client.setCallback(callback);
   
   // Initialize Relay Control:
@@ -234,19 +278,11 @@ void setup() {
   
   // Initialize the PID and related variables
   myPID.SetTunings(Kp,Ki,Kd);
- 
   myPID.SetSampleTime(1000);
   myPID.SetOutputLimits(0, WindowSize);
-}
-
-//Timer interrupt handler
-void TimerInterrupt() {
-  if (opState == OFF) {
-    digitalWrite(RelayPin, LOW);  // make sure relay is off
-  } else {
-    DriveOutput();
-  }
-  //Console.println("Interrupt");
+  myPID.SetMode(AUTOMATIC);
+  opState = RUN;
+  Setpoint = 60;
 }
 
 //Main loop
@@ -256,7 +292,19 @@ void loop() {
    if (!client.connected()) {
      reconnect();
    }
-   client.loop();
+   client.loop();  
+   
+   //Read the thermocouple and send the status to MQTT
+   double f = thermocouple.readFarenheit();
+   double c = thermocouple.readCelsius();
+   if (isnan(f)||isnan(c)) {
+    sendError();
+   } else {
+    Serial.print("Temperature F: ");
+    Serial.println(f);
+    sendTemp(c,f);
+   }
+
    switch (opState) {
      case OFF:
        Serial.println("OFF");
@@ -266,7 +314,9 @@ void loop() {
        break;
      case RUN:
        Serial.println("ON");
+       Serial.println("Running Conroller");
        DoControl();
+       DriveOutput();
        break;
      case TUNE_P:
        break;
@@ -274,17 +324,10 @@ void loop() {
        break;
      case TUNE_D:
        break;  
-   }   
-   
-   //Make sure the bridge always has the current temperature.
-   //double f = thermocouple.readFarenheit();
-   //double c = thermocouple.readCelsius();
-   //if (isnan(f)||isnan(c)) {
-   sendError();
-   //}
+   }
    
    
-   delay(15000);
+   delay(5000);
    
 }
 
@@ -299,10 +342,8 @@ void DoControl() {
      sendError();
    } else {
       Input = f;
+      Serial.print("Setting input to: ");
       Serial.println(Input);
-     //We're getting good data.  Make is so the bridge can see it
-     /*double tempF = thermocouple.readFarenheit();
-     */
     if (tuning) { // run the auto-tuner
        if (aTune.Runtime()){ // returns 'true' when done
          FinishAutoTune();
@@ -316,23 +357,28 @@ void DoControl() {
   
     // Time Proportional relay state is updated regularly via timer interrupt.
     onTime = Output;  
-  } 
-  sendTemp(c,f);
+  }
 }
 
 // ************************************************
 // Called by ISR every 15ms to drive the output
 // ************************************************
 void DriveOutput() {  
-  long now = millis();
+  unsigned long now = millis();
   // Set the output
   // "on time" is proportional to the PID output
-  if(now - windowStartTime>WindowSize) { //time to shift the Relay Window
+  if(now - windowStartTime > WindowSize) { //time to shift the Relay Window
      windowStartTime += WindowSize;
   }
+  Serial.print("Ontime Value: ");
+  Serial.println(onTime);
+  Serial.print("Timeshift Value: ");
+  Serial.println((now-windowStartTime));
   if((onTime > 100) && (onTime > (now - windowStartTime))) {
+    Serial.println("Turning on relay");
      digitalWrite(RelayPin,HIGH);
   } else {
+    Serial.println("Turning off relay");
      digitalWrite(RelayPin,LOW);
   }
   
