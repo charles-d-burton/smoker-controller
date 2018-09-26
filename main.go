@@ -146,6 +146,8 @@ func (status *ServerStatus) sendStatus(mqttClient MQTT.Client) {
 	token := mqttClient.Publish("/cooktroller/charles/smoker/status", 1, false, data)
 	token.WaitTimeout(30 * time.Second)
 	token.Wait()
+	log.Println("Sent message: ")
+	log.Println(string(data))
 	if token.Error() != nil {
 		log.Println("Unable to send message to MQTT", token.Error())
 	}
