@@ -51,7 +51,7 @@ type SetRunningState struct {
 }
 
 func main() {
-	log.Println("Hello world")
+	log.Println("Starting up!")
 	err := connect()
 	if err != nil {
 		log.Println("application died")
