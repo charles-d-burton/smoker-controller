@@ -67,17 +67,19 @@ func connect() error {
 	connOpts.SetAutoReconnect(true)
 	connOpts.SetMaxReconnectInterval(1 * time.Second)
 	connOpts.SetTLSConfig(getTLSConfig())
+	log.Println("Certs loaded")
 	brokerURL := fmt.Sprintf("tcps://%s:%d%s", "a10cp24047duti.iot.us-east-1.amazonaws.com", 8883, "/")
 	connOpts.AddBroker(brokerURL)
 	mqttClient := MQTT.NewClient(connOpts)
 	token := mqttClient.Connect()
 	token.WaitTimeout(30 * time.Second)
 	token.Wait()
+
 	if token.Error() != nil {
 		log.Println(token.Error())
 		return token.Error()
 	}
-
+	log.Println("MQTT Endpoint connected")
 	for _, topic := range subTopics {
 		token := mqttClient.Subscribe(topic, 1, subscriber)
 		token.WaitTimeout(30 * time.Second)
@@ -85,6 +87,7 @@ func connect() error {
 		if token.Error() != nil {
 			return token.Error()
 		}
+		log.Println("Subscribed to topic: ", topic)
 	}
 	//Start the PID control loop
 	pidControlLoop(10*time.Second, doControl, mqttClient)
