@@ -52,7 +52,10 @@ type SetRunningState struct {
 
 func main() {
 	log.Println("Hello world")
-
+	err := connect()
+	if err != nil {
+		log.Println("application died")
+	}
 }
 
 //Connect to and setup MQTT
