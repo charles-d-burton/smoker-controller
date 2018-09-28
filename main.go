@@ -61,7 +61,10 @@ func main() {
 		log.Println(err)
 	}
 	log.Println(max31856.CJLF_WR)
-	ch0.ResetFaults()
+	err = ch0.ResetFaults()
+	if err != nil {
+		log.Println(err)
+	}
 	temp, err := ch0.GetTempOnce()
 	log.Println("Temperature reading: ", temp)
 	err = connect()
