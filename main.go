@@ -11,6 +11,7 @@ import (
 
 	MQTT "github.com/eclipse/paho.mqtt.golang"
 	"github.com/google/uuid"
+	"github.com/the-sibyl/goMAX31856"
 )
 
 var (
@@ -52,7 +53,17 @@ type SetRunningState struct {
 
 func main() {
 	log.Println("Starting up!")
-	err := connect()
+	var spiClockSpeed int64 = 100000
+	devPathCh0 := "/dev/spidev0.0"
+	timeoutPeriod := time.Second
+	ch0, err := max31856.Setup(devPathCh0, spiClockSpeed,30, timeoutPeriod)
+	if err != nil {
+		log.Println(err)
+	}
+	log.Println(max31856.CJLF_WR)
+	temp, err := ch0.GetTempOnce()
+	log.Println("Temperature reading: ",temp)
+	err = connect()
 	if err != nil {
 		log.Println("application died")
 	}
