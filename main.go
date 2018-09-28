@@ -90,7 +90,9 @@ func connect() error {
 		log.Println("Subscribed to topic: ", topic)
 	}
 	//Start the PID control loop
-	pidControlLoop(10*time.Second, doControl, mqttClient)
+	go pidControlLoop(10*time.Second, doControl, mqttClient)
+	//Start the MQTT loop
+	
 	return nil
 }
 
