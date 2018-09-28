@@ -56,13 +56,14 @@ func main() {
 	var spiClockSpeed int64 = 100000
 	devPathCh0 := "/dev/spidev0.0"
 	timeoutPeriod := time.Second
-	ch0, err := max31856.Setup(devPathCh0, spiClockSpeed,30, timeoutPeriod)
+	ch0, err := max31856.Setup(devPathCh0, spiClockSpeed, 30, timeoutPeriod)
 	if err != nil {
 		log.Println(err)
 	}
 	log.Println(max31856.CJLF_WR)
+	ch0.ResetFaults()
 	temp, err := ch0.GetTempOnce()
-	log.Println("Temperature reading: ",temp)
+	log.Println("Temperature reading: ", temp)
 	err = connect()
 	if err != nil {
 		log.Println("application died")
@@ -103,7 +104,7 @@ func connect() error {
 	//Start the PID control loop
 	go pidControlLoop(10*time.Second, doControl, mqttClient)
 	//Start the MQTT loop
-	
+
 	return nil
 }
 
